@@ -2,10 +2,8 @@ cmake_minimum_required(VERSION 3.0.2)
 project(balm2)
 
 set(CMAKE_BUILD_TYPE "Release")
-# set(CMAKE_CXX_FLAGS "-std=c++14")
-# set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
-
-ADD_COMPILE_OPTIONS(-std=c++14 )
+set(CMAKE_CXX_FLAGS "-std=c++14")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
 set( CMAKE_CXX_FLAGS "-std=c++14 -O3" )
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions" )
@@ -21,6 +19,7 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_conversions
   pcl_ros
 )
+set(CMAKE_PREFIX_PATH "/usr/lib/x86_64-linux-gnu")
 
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
@@ -31,6 +30,12 @@ catkin_package(
   DEPENDS EIGEN3 PCL
   INCLUDE_DIRS
 )
+find_package(OpenMP REQUIRED)
+
+if(OPENMP_FOUND)
+    message(STATUS "OpenMP found!")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+endif()
 
 include_directories(
   include

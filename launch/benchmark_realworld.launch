@@ -1,9 +1,9 @@
 <launch>
 	<arg name="rviz" default="true" />
 
-	<param name="voxel_size" type="double" value="2" />
+	<param name="voxel_size" type="double" value="5" />
 	<param name="file_path" type="string" value="$(find balm2)" />
-	<node pkg="balm2" type="benchmark_realworld" name="benchmark_realworld" output="screen" />
+	<node pkg="balm2" type="benchmark_realworld" name="benchmark_realworld" output="screen" launch-prefix="gdb -ex run --args"/>
 
 	<group if="$(arg rviz)">
 		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find balm2)/rviz_cfg/back.rviz" />

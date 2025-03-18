@@ -15,10 +15,21 @@
 
 using namespace std;
 
-template <typename T>
-void pub_pl_func(T &pl, ros::Publisher &pub)
+void pub_pl_func(pcl::PointCloud<PointType> &pl, ros::Publisher &pub)
 {
-  pl.height = 1; pl.width = pl.size();
+  if (pl.empty())
+  {
+    ROS_WARN("PointCloud is empty, skipping publish.");
+    return;
+  }
+
+  if (!pub)
+  {
+    ROS_ERROR("Publisher is not valid!");
+    return;
+  }
+  pl.height = 1;
+  pl.width = pl.size();
   sensor_msgs::PointCloud2 output;
   pcl::toROSMsg(pl, output);
   output.header.frame_id = "camera_init";
@@ -26,18 +37,19 @@ void pub_pl_func(T &pl, ros::Publisher &pub)
   pub.publish(output);
 }
 
-ros::Publisher pub_path, pub_test, pub_show, pub_cute;
+ros::Publisher pub_path, pub_show, pub_cute;
 
-int read_pose(vector<double> &tims, PLM(3) &rots, PLV(3) &poss, string prename)
+int read_pose(vector<double> &tims, PLM(3) & rots, PLV(3) & poss, string prename)
 {
-  string readname = prename + "alidarPose.csv";
+  string readname = prename + "LOG/update_pose.csv";
 
   cout << readname << endl;
   ifstream inFile(readname);
 
-  if(!inFile.is_open())
+  if (!inFile.is_open())
   {
-    printf("open fail\n"); return 0;
+    printf("open fail\n");
+    return 0;
   }
 
   int pose_size = 0;
@@ -46,16 +58,16 @@ int read_pose(vector<double> &tims, PLM(3) &rots, PLV(3) &poss, string prename)
   vector<double> nums;
 
   int ord = 0;
-  while(getline(inFile, lineStr))
+  while (getline(inFile, lineStr))
   {
     ord++;
     stringstream ss(lineStr);
-    while(getline(ss, str, ','))
+    while (getline(ss, str, ','))
       nums.push_back(stod(str));
 
-    if(ord == 4)
+    if (ord == 4)
     {
-      for(int j=0; j<16; j++)
+      for (int j = 0; j < 16; j++)
         aff(j) = nums[j];
 
       Eigen::Matrix4d affT = aff.transpose();
@@ -74,23 +86,32 @@ int read_pose(vector<double> &tims, PLM(3) &rots, PLV(3) &poss, string prename)
 
 void read_file(vector<IMUST> &x_buf, vector<pcl::PointCloud<PointType>::Ptr> &pl_fulls, string &prename)
 {
-  prename = prename + "/datas/benchmark_realworld/";
+  prename = prename + "/datas/01/";
 
-  PLV(3) poss; PLM(3) rots;
+  PLV(3)
+  poss;
+  PLM(3)
+  rots;
   vector<double> tims;
   int pose_size = read_pose(tims, rots, poss, prename);
-  
-  for(int m=0; m<pose_size; m++)
+
+  for (int m = 0; m < pose_size; m++)
   {
-    string filename = prename + "full" + to_string(m) + ".pcd";
+    ostringstream oss;
+    oss << prename << "PCDs/" << setw(6) << setfill('0') << m << ".pcd";
+    string filename = oss.str();
 
     pcl::PointCloud<PointType>::Ptr pl_ptr(new pcl::PointCloud<PointType>());
     pcl::PointCloud<pcl::PointXYZI> pl_tem;
     pcl::io::loadPCDFile(filename, pl_tem);
-    for(pcl::PointXYZI &pp: pl_tem.points)
+    double ratio = (double)(m + 1) / (double)pose_size * 100;
+    ROS_INFO("PCD Files Loaded: %.2f%% (%d/%d)", ratio, m + 1, pose_size);
+    for (pcl::PointXYZI &pp : pl_tem.points)
     {
       PointType ap;
-      ap.x = pp.x; ap.y = pp.y; ap.z = pp.z;
+      ap.x = pp.x;
+      ap.y = pp.y;
+      ap.z = pp.z;
       ap.intensity = pp.intensity;
       pl_ptr->push_back(ap);
     }
@@ -98,17 +119,17 @@ void read_file(vector<IMUST> &x_buf, vector<pcl::PointCloud<PointType>::Ptr> &pl
     pl_fulls.push_back(pl_ptr);
 
     IMUST curr;
-    curr.R = rots[m]; curr.p = poss[m]; curr.t = tims[m];
+    curr.R = rots[m];
+    curr.p = poss[m];
+    curr.t = tims[m];
     x_buf.push_back(curr);
   }
-  
-
 }
 
 void data_show(vector<IMUST> x_buf, vector<pcl::PointCloud<PointType>::Ptr> &pl_fulls)
 {
   IMUST es0 = x_buf[0];
-  for(uint i=0; i<x_buf.size(); i++)
+  for (uint i = 0; i < x_buf.size(); i++)
   {
     x_buf[i].p = es0.R.transpose() * (x_buf[i].p - es0.p);
     x_buf[i].R = es0.R.transpose() * x_buf[i].R;
@@ -116,14 +137,14 @@ void data_show(vector<IMUST> x_buf, vector<pcl::PointCloud<PointType>::Ptr> &pl_
 
   pcl::PointCloud<PointType> pl_send, pl_path;
   int winsize = x_buf.size();
-  for(int i=0; i<winsize; i++)
+  for (int i = 0; i < winsize; i++)
   {
     pcl::PointCloud<PointType> pl_tem = *pl_fulls[i];
     down_sampling_voxel(pl_tem, 0.05);
     pl_transform(pl_tem, x_buf[i]);
     pl_send += pl_tem;
 
-    if((i%200==0 && i!=0) || i == winsize-1)
+    if ((i % 200 == 0 && i != 0) || i == winsize - 1)
     {
       pub_pl_func(pl_send, pub_show);
       pl_send.clear();
@@ -145,7 +166,6 @@ int main(int argc, char **argv)
 {
   ros::init(argc, argv, "benchmark2");
   ros::NodeHandle n;
-  pub_test = n.advertise<sensor_msgs::PointCloud2>("/map_test", 100);
   pub_path = n.advertise<sensor_msgs::PointCloud2>("/map_path", 100);
   pub_show = n.advertise<sensor_msgs::PointCloud2>("/map_show", 100);
   pub_cute = n.advertise<sensor_msgs::PointCloud2>("/map_cute", 100);
@@ -161,7 +181,7 @@ int main(int argc, char **argv)
   read_file(x_buf, pl_fulls, file_path);
 
   IMUST es0 = x_buf[0];
-  for(uint i=0; i<x_buf.size(); i++)
+  for (uint i = 0; i < x_buf.size(); i++)
   {
     x_buf[i].p = es0.R.transpose() * (x_buf[i].p - es0.p);
     x_buf[i].R = es0.R.transpose() * x_buf[i].R;
@@ -173,59 +193,61 @@ int main(int argc, char **argv)
   data_show(x_buf, pl_fulls);
   printf("Check the point cloud with the initial poses.\n");
   printf("If no problem, input '1' to continue or '0' to exit...\n");
-  int a; cin >> a; if(a==0) exit(0);
+  int a;
+  cin >> a;
+  if (a == 0)
+    exit(0);
 
   pcl::PointCloud<PointType> pl_full, pl_surf, pl_path, pl_send;
-  for(int iterCount=0; iterCount<1; iterCount++)
-  { 
-    unordered_map<VOXEL_LOC, OCTO_TREE_ROOT*> surf_map;
+  unordered_map<VOXEL_LOC, OCTO_TREE_ROOT *> surf_map;
 
-    eigen_value_array[0] = 1.0 / 16;
-    eigen_value_array[1] = 1.0 / 16;
-    eigen_value_array[2] = 1.0 / 9;
+  for (int i = 0; i < win_size; i++)
+    cut_voxel(surf_map, *pl_fulls[i], x_buf[i], i);
 
-    for(int i=0; i<win_size; i++)
-      cut_voxel(surf_map, *pl_fulls[i], x_buf[i], i);
+  VOX_HESS voxhess;
+  int total = surf_map.size(); // 获取总的元素数量
+  int count = 0;               // 计数器
 
-    pcl::PointCloud<PointType> pl_send;
-    pub_pl_func(pl_send, pub_show);
+  for (auto iter = surf_map.begin(); iter != surf_map.end() && n.ok(); iter++)
+  {
+    iter->second->recut(win_size);
+    iter->second->tras_opt(voxhess, win_size);
+    iter->second->tras_display(pl_send, win_size);
 
-    pcl::PointCloud<PointType> pl_cent; pl_send.clear();
-    VOX_HESS voxhess;
-    for(auto iter=surf_map.begin(); iter!=surf_map.end() && n.ok(); iter++)
-    {
-      iter->second->recut(win_size);
-      iter->second->tras_opt(voxhess, win_size);
-      iter->second->tras_display(pl_send, win_size);
-    }
-
-    pub_pl_func(pl_send, pub_cute);
-    printf("\nThe planes (point association) cut by adaptive voxelization.\n");
-    printf("If the planes are too few, the optimization will be degenerated and fail.\n");
-    printf("If no problem, input '1' to continue or '0' to exit...\n");
-    int a; cin >> a; if(a==0) exit(0);
-    pl_send.clear(); pub_pl_func(pl_send, pub_cute);
-
-    if(voxhess.plvec_voxels.size() < 3 * x_buf.size())
-    {
-      printf("Initial error too large.\n");
-      printf("Please loose plane determination criteria for more planes.\n");
-      printf("The optimization is terminated.\n");
-      exit(0);
-    }
-
-    BALM2 opt_lsv;
-    opt_lsv.damping_iter(x_buf, voxhess);
-
-    for(auto iter=surf_map.begin(); iter!=surf_map.end();)
-    {
-      delete iter->second;
-      surf_map.erase(iter++);
-    }
-    surf_map.clear();
-
-    malloc_trim(0);
+    // 更新计数器并打印进度
+    count++;
+    double progress = (static_cast<double>(count) / total) * 100;   // 计算进度百分比
+    //ROS_INFO("Processing: %.2f%% (%d/%d)", progress, count, total); // 打印进度
   }
+
+  pub_pl_func(pl_send, pub_cute);
+  printf("\nThe planes (point association) cut by adaptive voxelization.\n");
+  printf("If the planes are too few, the optimization will be degenerated and fail.\n");
+  printf("If no problem, input '1' to continue or '0' to exit...\n");
+  cin >> a;
+  if (a == 0)
+    exit(0);
+  // pl_send.clear();
+  pub_pl_func(pl_send, pub_cute);
+  pl_send.clear();
+  if (voxhess.plvec_voxels.size() < 3 * x_buf.size())
+  {
+    printf("Initial error too large.\n");
+    printf("Please loose plane determination criteria for more planes.\n");
+    printf("The optimization is terminated.\n");
+    exit(0);
+  }
+
+  BALM2 opt_lsv;
+  opt_lsv.damping_iter(x_buf, voxhess);
+
+  for (auto iter = surf_map.begin(); iter != surf_map.end();)
+  {
+    delete iter->second;
+    surf_map.erase(iter++);
+  }
+  surf_map.clear();
+
 
   printf("\nRefined point cloud is publishing...\n");
   malloc_trim(0);
@@ -234,7 +256,4 @@ int main(int argc, char **argv)
 
   ros::spin();
   return 0;
-
 }
-
-
