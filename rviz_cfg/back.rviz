@@ -190,7 +190,7 @@ Visualization Manager:
       Min Color: 0; 0; 0
       Name: show
       Position Transformer: XYZ
-      Queue Size: 10
+      Queue Size: 10000
       Selectable: true
       Size (Pixels): 1
       Size (m): 0.009999999776482582

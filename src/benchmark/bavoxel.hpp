@@ -996,7 +996,7 @@ public:
 
   void tras_opt(VOX_HESS &vox_opt, int win_count)
   {
-    ROS_INFO("vox_opt.pplvec_voxels.size()=%d", vox_opt.plvec_voxels.size());
+    // ROS_INFO("vox_opt.pplvec_voxels.size()=%d", vox_opt.plvec_voxels.size());
     if (octo_state != 1)
     {
       int points_size = 0;
@@ -1173,13 +1173,14 @@ public:
           planes[j]++;
     }
     sort(planes.begin(), planes.end());
-    if (planes[0] < 20)
-    {
-      printf("Initial error too large.\n");
-      printf("Please loose plane determination criteria for more planes.\n");
-      printf("The optimization is terminated.\n");
-      exit(0);
-    }
+    // if (planes[0] < 20)
+    // {
+    //   printf("planes[0] = %d\n", planes[0]);
+    //   printf("Initial error too large in damping_iter. \n");
+    //   printf("Please loose plane determination criteria for more planes.\n");
+    //   printf("The optimization is terminated.\n");
+    //   exit(0);
+    // }
 
     double u = 0.01, v = 2;
     Eigen::MatrixXd D(6 * win_size, 6 * win_size), Hess(6 * win_size, 6 * win_size);
