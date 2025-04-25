@@ -2,7 +2,7 @@
 	<arg name="rviz" default="true" />
 
 	<param name="pnoise" type="double" value="0.02" />
-	<param name="file_path" type="string" value="$(find balm2)/datas/all_mapping_results/MulranParkinglot/01/" />
+	<param name="file_path" type="string" value="$(find balm2)/../../../consistency/" />
 	<node pkg="balm2" type="consistency" name="consistency" output="screen" />
 
 	<group if="$(arg rviz)">

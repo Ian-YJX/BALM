@@ -281,6 +281,7 @@ public:
   Eigen::Matrix3d P;
   Eigen::Vector3d v;
   int N;
+  Eigen::Matrix<double, 3, 6> J;  // <-- Add this
 
   #ifdef POINT_NOISE
   Eigen::Matrix<double, 6, 6> P_cov; Eigen::Matrix3d v_cov;
@@ -293,6 +294,7 @@ public:
     P.setZero();
     v.setZero();
     N = 0;
+    J.setZero(); 
 
     #ifdef POINT_NOISE
     P_cov.setZero(); v_cov.setZero(); BP_cov.setZero();
@@ -305,7 +307,8 @@ public:
     P.setZero();
     v.setZero();
     N = 0;
-
+    J.setZero(); 
+    
     #ifdef POINT_NOISE
     P_cov.setZero(); v_cov.setZero(); BP_cov.setZero();
     c_cov.setZero();

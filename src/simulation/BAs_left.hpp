@@ -10,7 +10,7 @@
 #include <ros/ros.h>
 #include <random>
 
-int win_size = 50;
+int win_size = 20;
 int fix_size = 1;
 
 const double one_three = (1.0 / 3.0);
@@ -164,147 +164,88 @@ public:
         Hess.block<6, 6>(6 * i, 6 * j) = Hess.block<6, 6>(6 * j, 6 * i).transpose();
   }
 
-  void left_evaluate_acc2(const vector<IMUST> &xs, int head, int end, Eigen::MatrixXd &Hess, Eigen::VectorXd &JacT, double &residual)
+  void left_evaluate_acc2(const vector<IMUST> &xs, int start, int end, Eigen::MatrixXd &Hess, Eigen::VectorXd &JacT, double &residual)
   {
-    Hess.setZero();
-    JacT.setZero();
+    int pose_size = xs.size();
     residual = 0;
-    int l = 0;
-    PLM(4)
-    T(win_size);
-    for (int i = 0; i < win_size; i++)
-      T[i] << xs[i].R, xs[i].p, 0, 0, 0, 1;
+    Hess.setZero(6 * win_size, 6 * win_size);
+    JacT.setZero(6 * win_size);
 
-    vector<PLM(4) *> Cs;
-    for (int a = 0; a < (int)plvec_voxels.size(); a++)
+    int kk = 0;
+    vector<PointCluster> sig_tran(win_size);
+
+    ROS_INFO("[Debug] left_evaluate_acc2 start: processing range [%d, %d)", start, end);
+
+    for (int a = start; a < end; a++)
     {
       const vector<PointCluster> &sig_orig = *plvec_voxels[a];
-      PLM(4) *Co = new PLM(4)(win_size, Eigen::Matrix4d::Zero());
-      for (int i = 0; i < win_size; i++)
-        Co->at(i) << sig_orig[i].P, sig_orig[i].v, sig_orig[i].v.transpose(), sig_orig[i].N;
-      Cs.push_back(Co);
-    }
-
-    for (int a = head; a < end; a++)
-    {
-      double coe = coeffs[a];
-      Eigen::Matrix4d C;
       PointCluster sig = *sig_vecs[a];
-      C << sig.P, sig.v, sig.v.transpose(), sig.N;
 
-      vector<int> Ns(win_size, 0);
-
-      PLM(4) &Co = *Cs[a];
-      PLM(4)
-      TC(win_size), TCT(win_size);
-      for (int j = 0; j < win_size; j++)
-        if ((int)Co[j](3, 3) > 0)
-        {
-          TC[j] = T[j] * Co[j];
-          TCT[j] = TC[j] * T[j].transpose();
-          C += TCT[j];
-
-          Ns[j] = Co[j](3, 3);
-        }
-
-      double NN = C(3, 3);
-      C = C / NN;
-      Eigen::Vector3d v_bar = C.block<3, 1>(0, 3);
-
-      Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(C.block<3, 3>(0, 0) - v_bar * v_bar.transpose());
-      Eigen::Vector3d lmbd = saes.eigenvalues();
-      Eigen::Matrix3d Uev = saes.eigenvectors();
-
-      residual += coe * lmbd[l];
-
-      Eigen::Vector3d u[3] = {Uev.col(0), Uev.col(1), Uev.col(2)};
-      Eigen::Matrix<double, 6, 4> U[3];
-      PLV(6)
-      g_kl[3];
-      for (int k = 0; k < 3; k++)
+      // Transform points and accumulate signature
+      for (int i = 0; i < win_size; i++)
       {
-        g_kl[k].resize(win_size);
-        U[k].setZero();
-        U[k].block<3, 3>(0, 0) = hat(-u[k]);
-        U[k].block<3, 1>(3, 3) = u[k];
+        sig_tran[i].transform(sig_orig[i], xs[i]);
+        sig += sig_tran[i];
       }
 
-      PLV(6)
-      UlTCF(win_size, Eigen::Matrix<double, 6, 1>::Zero());
+      double NN = sig.N;
+      if (NN <= 1e-6)
+      {
+        ROS_INFO("[Debug] Cluster %d skipped due to low point count N = %.6f", a, NN);
+        continue;
+      }
 
-      Eigen::VectorXd JacT_iter(6 * win_size);
+      Eigen::Vector3d vBar = sig.v / NN;
+      Eigen::Matrix3d cmt = sig.P / NN - vBar * vBar.transpose();
+
+      Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(cmt);
+      Eigen::Vector3d lmbd = saes.eigenvalues();
+
+      if (!lmbd.allFinite())
+      {
+        ROS_INFO("[Debug] Invalid eigenvalue at cluster %d, skipping...", a);
+        continue;
+      }
+
+      residual += coeffs[a] * lmbd[kk];
+
+      // Compute Jacobian and Hessian
       for (int i = 0; i < win_size; i++)
-        if (Ns[i] != 0)
-        {
-          Eigen::Matrix<double, 3, 4> temp = T[i].block<3, 4>(0, 0);
-          temp.block<3, 1>(0, 3) -= v_bar;
-          Eigen::Matrix<double, 4, 3> TC_TCFSp = TC[i] * temp.transpose();
-          for (int k = 0; k < 3; k++)
-          {
-            Eigen::Matrix<double, 6, 1> g1, g2;
-            g1 = U[k] * TC_TCFSp * u[l];
-            g2 = U[l] * TC_TCFSp * u[k];
+      {
+        if (sig_tran[i].J.rows() == 0 || sig_tran[i].J.cols() == 0)
+          continue;
 
-            g_kl[k][i] = (g1 + g2) / NN;
-          }
+        Eigen::Matrix<double, 3, 6> Ji = sig_tran[i].J;
+        Eigen::Vector3d vi = sig_tran[i].v;
+        Eigen::Matrix3d Pi = sig_tran[i].P;
 
-          UlTCF[i] = (U[l] * TC[i]).block<6, 1>(0, 3);
-          JacT.block<6, 1>(6 * i, 0) += coe * g_kl[l][i];
+        // Compute Pi_term (3x3 matrix)
+        Eigen::Matrix<double, 3, 3> Pi_term = Pi / NN - vi * vBar.transpose() / (NN * NN);
 
-          // Eigen::Matrix<double, 6, 6> Hb(2.0/NN * U[l] * TCT[i] * U[l].transpose());
+        // Ensure Ji.transpose() is 6x3, Pi_term is 3x3, and JiT_lmbd will be 6x1
+        Eigen::Matrix<double, 6, 1> JiT_lmbd = Ji.transpose() * Pi_term * vBar; // Adjusted
 
-          Eigen::Matrix<double, 6, 6> Ha(-2.0 / NN / NN * UlTCF[i] * UlTCF[i].transpose());
+        JacT.block<6, 1>(6 * i, 0) += coeffs[a] * JiT_lmbd;
 
-          Eigen::Matrix3d Ell = 1.0 / NN * hat(TC_TCFSp.block<3, 3>(0, 0) * u[l]) * hat(u[l]);
-          Ha.block<3, 3>(0, 0) += Ell + Ell.transpose();
+        // Compute Hessian (6x6)
+        Eigen::Matrix<double, 6, 6> Hi = Ji.transpose() * Ji;
+        Hess.block<6, 6>(6 * i, 6 * i) += coeffs[a] * Hi;
+      }
 
-          for (int k = 0; k < 3; k++)
-            if (k != l)
-              Ha += 2.0 / (lmbd[l] - lmbd[k]) * g_kl[k][i] * g_kl[k][i].transpose();
-
-          Hess.block<6, 6>(6 * i, 6 * i) += coe * Ha;
-        }
-
-      for (int i = 0; i < win_size; i++)
-        if (Ns[i] != 0)
-        {
-          Eigen::Matrix<double, 6, 6> Hb = U[l] * TCT[i] * U[l].transpose();
-          Hess.block<6, 6>(6 * i, 6 * i) += 2.0 / NN * coe * Hb;
-        }
-
-      for (int i = 0; i < win_size - 1; i++)
-        if (Ns[i] != 0)
-        {
-          for (int j = i + 1; j < win_size; j++)
-            if (Ns[j] != 0)
-            {
-              Eigen::Matrix<double, 6, 6> Ha = -2.0 / NN / NN * UlTCF[i] * UlTCF[j].transpose();
-
-              for (int k = 0; k < 3; k++)
-                if (k != l)
-                  Ha += 2.0 / (lmbd[l] - lmbd[k]) * g_kl[k][i] * g_kl[k][j].transpose();
-
-              Hess.block<6, 6>(6 * i, 6 * j) += coe * Ha;
-            }
-        }
+      ROS_INFO("[Debug] Processed cluster %d: residual += %.6f", a, coeffs[a] * lmbd[kk]);
     }
 
-    for (int i = 1; i < win_size; i++)
-      for (int j = 0; j < i; j++)
-        Hess.block<6, 6>(6 * i, 6 * j) = Hess.block<6, 6>(6 * j, 6 * i).transpose();
-
-    for (int i = 0; i < (int)Cs.size(); i++)
-      delete Cs[i];
-    Cs.clear();
+    ROS_INFO("[Debug] left_evaluate_acc2 done: residual = %.6f", residual);
   }
 
   void evaluate_only_residual(const vector<IMUST> &xs, double &residual)
   {
     residual = 0;
     vector<PointCluster> sig_tran(win_size);
-    int kk = 0; // The kk-th lambda value
-
+    int kk = 0;
     int gps_size = plvec_voxels.size();
+
+    ROS_INFO("[Debug] evaluate_only_residual start with %d clusters", gps_size);
 
     for (int a = 0; a < gps_size; a++)
     {
@@ -317,14 +258,28 @@ public:
         sig += sig_tran[i];
       }
 
+      if (sig.N <= 1e-6)
+        continue;
+
       Eigen::Vector3d vBar = sig.v / sig.N;
       Eigen::Matrix3d cmt = sig.P / sig.N - vBar * vBar.transpose();
 
       Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(cmt);
       Eigen::Vector3d lmbd = saes.eigenvalues();
 
-      residual += coeffs[a] * lmbd[kk];
+      if (!lmbd.allFinite())
+      {
+        ROS_INFO("[Debug] Eigenvalue contains invalid number at index %d", a);
+        continue;
+      }
+
+      double incr = coeffs[a] * lmbd[kk];
+      residual += incr;
+
+      ROS_INFO("[Debug] Cluster %d contribution: %.6f", a, incr);
     }
+
+    ROS_INFO("[Debug] evaluate_only_residual done, total residual = %.6f", residual);
   }
 
   Eigen::Matrix<double, 4, 9> g1(const Eigen::Vector4d &w)
@@ -977,11 +932,14 @@ public:
     double residual = 0;
     Hess.setZero();
     JacT.setZero();
-    PLM(-1)
-    hessians(thd_num);
-    PLV(-1)
-    jacobins(thd_num);
 
+    ROS_INFO("[Debug] divide_thread start: pose size = %lu, voxel size = %lu", x_stats.size(), voxhess.plvec_voxels.size());
+
+    // Initialize hessians and jacobins arrays
+    vector<Eigen::MatrixXd> hessians(thd_num);
+    vector<Eigen::VectorXd> jacobins(thd_num);
+
+    // Resize matrices for each thread
     for (int i = 0; i < thd_num; i++)
     {
       hessians[i].resize(6 * win_size, 6 * win_size);
@@ -989,35 +947,46 @@ public:
     }
 
     int tthd_num = thd_num;
-    vector<double> resis(tthd_num, 0);
     int g_size = voxhess.plvec_voxels.size();
     if (g_size < tthd_num)
       tthd_num = 1;
 
-    vector<thread *> mthreads(tthd_num);
+    vector<double> resis(tthd_num, 0);
+    vector<std::thread> mthreads(tthd_num);
     double part = 1.0 * g_size / tthd_num;
+
+    // Launch threads to process voxel range in parallel
     for (int i = 0; i < tthd_num; i++)
     {
-      // mthreads[i] = new thread(&VOX_HESS::acc_evaluate, &voxhess, x_stats, part*i, part*(i+1), ref(hessians[i]), ref(jacobins[i]), ref(resis[i]));
-      mthreads[i] = new thread(&VOX_HESS::left_evaluate_acc2, &voxhess, x_stats, part * i, part * (i + 1), ref(hessians[i]), ref(jacobins[i]), ref(resis[i]));
+      int start = round(part * i);
+      int end = round(part * (i + 1));
+      ROS_INFO("[Debug] Thread %d processing range [%d, %d)", i, start, end);
+
+      // Using thread objects directly
+      mthreads[i] = std::thread(&VOX_HESS::left_evaluate_acc2, &voxhess, std::ref(x_stats), start, end,
+                                std::ref(hessians[i]), std::ref(jacobins[i]), std::ref(resis[i]));
     }
 
+    // Join threads and accumulate results
     for (int i = 0; i < tthd_num; i++)
     {
-      mthreads[i]->join();
+      mthreads[i].join(); // Wait for thread to finish
       Hess += hessians[i];
       JacT += jacobins[i];
       residual += resis[i];
-      delete mthreads[i];
+      ROS_INFO("[Debug] Thread %d finished with partial residual = %.6f", i, resis[i]);
     }
 
+    ROS_INFO("[Debug] divide_thread done, total residual = %.6f", residual);
     return residual;
   }
 
   double only_residual(vector<IMUST> &x_stats, VOX_HESS &voxhess, vector<IMUST> &x_ab)
   {
     double residual2 = 0;
+    ROS_INFO("[Debug] only_residual start: pose size = %lu", x_stats.size());
     voxhess.evaluate_only_residual(x_stats, residual2);
+    ROS_INFO("[Debug] only_residual done: residual = %.6f", residual2);
     return residual2;
   }
 
@@ -1057,7 +1026,7 @@ public:
     Eigen::VectorXd JacT(6 * win_size), dxi(6 * win_size);
 
     D.setIdentity();
-    double residual1, residual2, q;
+    double residual1 = 0, residual2 = 0, q = 0;
     bool is_calc_hess = true;
     vector<IMUST> x_stats_temp = x_stats;
 
@@ -1077,41 +1046,51 @@ public:
       D.diagonal() = Hess.diagonal();
       dxi = (Hess + u * D).ldlt().solve(-JacT);
 
+      if (dxi.hasNaN())
+      {
+        printf("dxi has NaN at iteration %d, aborting\n", i);
+        break;
+      }
+
       for (int j = 0; j < win_size; j++)
       {
-        // x_stats_temp[j].R = x_stats[j].R * Exp(dxi.block<3, 1>(DVEL*j, 0));
-        // x_stats_temp[j].p = x_stats[j].p + dxi.block<3, 1>(DVEL*j+3, 0);
-
         Eigen::Matrix3d dR = Exp(dxi.block<3, 1>(DVEL * j, 0));
         x_stats_temp[j].R = dR * x_stats[j].R;
         x_stats_temp[j].p = dR * x_stats[j].p + dxi.block<3, 1>(DVEL * j + 3, 0);
       }
+
       double q1 = 0.5 * dxi.dot(u * D * dxi - JacT);
+      if (std::isnan(q1) || fabs(q1) < 1e-12)
+      {
+        printf("Invalid q1: %lf at iter %d\n", q1, i);
+        break;
+      }
 
       residual2 = only_residual(x_stats_temp, voxhess, x_ab);
+      q = residual1 - residual2;
 
-      q = (residual1 - residual2);
-      printf("iter%d: (%lf %lf) u: %lf v: %.1lf q: %.3lf %lf %lf\n", i, residual1, residual2, u, v, q / q1, q1, q);
+      printf("iter%d: (%.6lf %.6lf) u: %.6lf v: %.1lf q: %.3lf q1: %.6lf q: %.6lf\n", i, residual1, residual2, u, v, q / q1, q1, q);
 
       if (q > 0)
       {
         x_stats = x_stats_temp;
-
-        q = q / q1;
+        double scale = 1 - pow(2 * q / q1 - 1, 3);
+        u *= std::max(scale, one_three);
         v = 2;
-        q = 1 - pow(2 * q - 1, 3);
-        u *= (q < one_three ? one_three : q);
         is_calc_hess = true;
       }
       else
       {
-        u = u * v;
-        v = 2 * v;
+        u *= v;
+        v *= 2;
         is_calc_hess = false;
       }
 
       if (fabs(residual1 - residual2) < 1e-9)
+      {
+        printf("Converged at iter %d\n", i);
         break;
+      }
     }
 
     if (covEnable)
